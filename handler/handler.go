@@ -2,7 +2,7 @@ package handler
 
 import (
 	"encoding/csv"
-	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,44 +10,32 @@ import (
 )
 
 func HandleParsing(dirPath string, queryWords []string) {
-	files := getFilesFromDirectory(dirPath)
+	csvFilePaths := readDir(dirPath)
 
-	csvFileNames := getCsvFileNames(files)
+	if len(csvFilePaths) != 0 {
+		log.Printf("CSV files to open: %s", csvFilePaths)
 
-	log.Printf("CSV files to open: %s\n", csvFileNames)
-
-	resultRecords := processCsvFiles(csvFileNames, dirPath, queryWords)
-
-	writeResult(resultRecords)
-}
-
-func getFilesFromDirectory(dirPath string) []os.FileInfo {
-
-	dir, err := os.Open(dirPath)
-	if err != nil {
-		log.Fatal("Unable to read directory "+dirPath, err)
+		resultRecords := processCsvFiles(csvFilePaths, queryWords)
+		writeResult(resultRecords)
+	} else {
+		log.Printf("Found no CSV files in: %s", dirPath)
 	}
 
-	log.Printf("Successfully opened dir %s", dirPath)
-
-	defer dir.Close()
-
-	files, err := dir.Readdir(-1)
-	if err != nil {
-		log.Fatal("Unable to read files in directory "+dirPath, err)
-	}
-
-	return files
 }
 
-func getCsvFileNames(files []os.FileInfo) []string {
+func readDir(dirName string) []string {
 	csvFiles := make([]string, 0)
 
-	for _, file := range files {
-		log.Printf("Current file: %s", file.Name())
-		if isCsvFile(file.Name()) {
-			csvFiles = append(csvFiles, file.Name())
+	err := filepath.Walk(dirName, func(path string, info fs.FileInfo, err error) error {
+		if err == nil && isCsvFile(path) {
+			csvFiles = append(csvFiles, path)
 		}
+
+		return nil
+	})
+
+	if err != nil {
+		log.Fatalf("FATAL: Error walking through: %s", dirName)
 	}
 
 	return csvFiles
@@ -57,14 +45,16 @@ func isCsvFile(fileName string) bool {
 	return filepath.Ext(fileName) == ".csv"
 }
 
-func processCsvFiles(fileNames []string, dirPath string, queryWords []string) [][]string {
+func processCsvFiles(fileNames []string, queryWords []string) [][]string {
 	resultRecords := make([][]string, 0)
 
 	for _, name := range fileNames {
-		file, err := os.Open(fmt.Sprintf("%s/%s", dirPath, name))
+		file, err := os.Open(name)
+
 		if err != nil {
-			log.Fatal("Unable to open file "+name, err)
+			log.Fatalf("FATAL: Unable to open file: %s", err.Error())
 		}
+
 		fileRecords := readCsvFile(file)
 		fileResultRecords := parseFileRecords(fileRecords, queryWords)
 		resultRecords = append(resultRecords, fileResultRecords...)
@@ -82,10 +72,10 @@ func readCsvFile(file *os.File) [][]string {
 	records, err := csvReader.ReadAll()
 
 	if err != nil {
-		log.Fatal("Unable to open file "+file.Name(), err)
+		log.Fatalf("FATAL: Unable to read: %s", err)
 	}
 
-	log.Printf("Reading %s", file.Name())
+	log.Printf("Reading: %s", file.Name())
 
 	return records
 }
@@ -111,16 +101,14 @@ func parseFileRecords(records [][]string, queryWords []string) [][]string {
 }
 
 func writeResult(resultRecords [][]string) {
-	out, _ := os.Create("result/output.txt")
+	const resultFileName = "result/output.txt"
 
-	defer func(out *os.File) {
-		err := out.Close()
-		if err != nil {
-			log.Fatal("Unable to create result file")
-		}
-	}(out)
+	out, _ := os.Create(resultFileName)
+	defer out.Close()
 
 	for _, record := range resultRecords {
 		out.WriteString(strings.Join(record, ",") + "\n")
 	}
+
+	log.Printf("Results were successfully written to: %s\n", resultFileName)
 }
